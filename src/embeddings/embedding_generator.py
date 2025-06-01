@@ -3,7 +3,7 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 
 def load_embedding_model(model_id: str, device: str) -> SentenceTransformer:
-    print(f"Lade Satz-Embedding-Modell '{model_id}' auf Gerät '{device}'.")
+    print(f"Lade Embedding-Modell '{model_id}' auf Gerät '{device}'.")
     try:
         model = SentenceTransformer(model_id, device=device)
         print(f"Modell '{model_id}' erfolgreich geladen.")

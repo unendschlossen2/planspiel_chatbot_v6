@@ -28,10 +28,10 @@ def main():
     db_persist_path = "./db/chroma_vector_db"
     db_collection_name = "topsim_gm_coll_gemma3_test"
 
-    force_rebuild_collection = True
+    force_rebuild_collection = False
 
-    # huggingface_token = "YOUR_TOKEN"
-    # if huggingface_token == "YOUR_TOKEN": huggingface_token = None
+    # huggingface_token = "TOKEN"
+    # if huggingface_token == "TOKEN": huggingface_token = None
     # if huggingface_token: attempt_huggingface_login(huggingface_token)
 
     try:
