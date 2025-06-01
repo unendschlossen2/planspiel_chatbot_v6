@@ -1,19 +1,14 @@
 import re
 from typing import List, Dict, Any
-import logging
 
 DEFAULT_MAX_CHARS_PER_CHUNK = 2000
 DEFAULT_MIN_CHARS_PER_CHUNK = 50
-CHUNK_HEADER_OVERVIEW_SUFFIX = " (Overview)"
+CHUNK_HEADER_OVERVIEW_SUFFIX = " (Übersicht)"
 MERGED_HEADER_SEPARATOR = " & "
 
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.propagate = False
+# Basic print function for feedback, replaces logger
+def _print_feedback(message: str, level: str = "INFO"):
+    print(f"Chunking-Feedback [{level}]: {message}")
 
 def _create_chunk_dict(
         header_text: str,
@@ -69,7 +64,7 @@ def _split_by_found_headers(
     parent_header_text = parent_chunk_dict.get("header_text", "")
     parent_header_level = parent_chunk_dict.get("header_level", 0)
     original_base_header = parent_chunk_dict.get("original_base_header", "")
-    source_filename = parent_chunk_dict.get("source_filename", "unknown")
+    source_filename = parent_chunk_dict.get("source_filename", "unbekannt")
 
     current_pos = 0
 
@@ -114,7 +109,6 @@ def _handle_oversized_chunk(
 ) -> List[Dict[str, Any]]:
     content = oversized_chunk["content"]
     parent_level = oversized_chunk["header_level"]
-    logger.info(f"    Handling oversized: '{oversized_chunk['header_text']}' (len {len(content)}), level H{parent_level}.")
 
     headers_in_content = _find_all_headers_in_text(content)
 
@@ -124,26 +118,21 @@ def _handle_oversized_chunk(
         found_headers_at_level = [h for h in headers_in_content if h['level'] == level_to_try]
         if found_headers_at_level:
             sub_headers_to_split_by = found_headers_at_level
-            logger.debug(f"        DynamicSplit: Found {len(sub_headers_to_split_by)} H{level_to_try} headers within '{oversized_chunk['header_text']}'.")
             break
 
     if sub_headers_to_split_by:
         split_chunks = _split_by_found_headers(content, sub_headers_to_split_by, oversized_chunk)
         if split_chunks and not (len(split_chunks) == 1 and split_chunks[0]["content"].strip() == content.strip()):
-            logger.debug(f"        DynamicSplit: Successfully split '{oversized_chunk['header_text']}' into {len(split_chunks)} sub-chunks by H{sub_headers_to_split_by[0]['level']}.")
             return split_chunks
         else:
-            header_level_log = sub_headers_to_split_by[0].get('level', 'unknown') if sub_headers_to_split_by else 'unknown'
-            logger.debug(f"        DynamicSplit: Splitting by H{header_level_log} for '{oversized_chunk['header_text']}' did not yield smaller/multiple distinct chunks. Will not split further by headers.")
             return [oversized_chunk]
     else:
-        logger.debug(f"        DynamicSplit: No suitable deeper headers found in '{oversized_chunk['header_text']}'. Will not split further by headers.")
         return [oversized_chunk]
 
 def _initial_split(
         markdown_text: str, source_filename: str, split_level: int
 ) -> List[Dict[str, Any]]:
-    logger.info(f"Initial split for '{source_filename}' by H{split_level} headers.")
+    _print_feedback(f"Initiale Teilung für '{source_filename}' nach H{split_level} Überschriften.")
 
     all_doc_headers = _find_all_headers_in_text(markdown_text)
     initial_chunks = []
@@ -151,15 +140,15 @@ def _initial_split(
     target_level_headers = [h for h in all_doc_headers if h['level'] == split_level]
 
     if not target_level_headers:
-        logger.warning(f"No H{split_level} headers found in '{source_filename}'. Treating entire document as one initial chunk.")
+        _print_feedback(f"Keine H{split_level} Überschriften in '{source_filename}' gefunden. Behandle gesamtes Dokument als einen initialen Chunk.", "WARNING")
         cleaned_full_content = filter_missing_content_lines(markdown_text)
         if cleaned_full_content.strip() or (not markdown_text.strip() and cleaned_full_content == ""):
             initial_chunks.append(_create_chunk_dict(
-                header_text=f"{source_filename} (Full Document)",
+                header_text=f"{source_filename} (Gesamtes Dokument)",
                 header_level=0,
                 content=cleaned_full_content,
                 source_filename=source_filename,
-                original_base_header=f"{source_filename} (Full Document)"
+                original_base_header=f"{source_filename} (Gesamtes Dokument)"
             ))
         return initial_chunks
 
@@ -186,24 +175,19 @@ def _initial_split(
                 original_base_header=chunk_title
             ))
 
-    logger.info(f"Found {len(initial_chunks)} initial sections from H{split_level} split.")
+    _print_feedback(f"{len(initial_chunks)} initiale Abschnitte aus H{split_level}-Teilung gefunden.")
     return initial_chunks
 
 
 def split_markdown_by_headers(
         markdown_text: str,
-        source_filename: str = "unknown",
+        source_filename: str = "unbekannt",
         split_level: int = 3,
         max_chars_per_chunk: int = DEFAULT_MAX_CHARS_PER_CHUNK,
         min_chars_per_chunk: int = DEFAULT_MIN_CHARS_PER_CHUNK,
-        verbose: bool = False
 ) -> List[Dict[str, Any]]:
-    if verbose:
-        logger.setLevel(logging.DEBUG)
-    else:
-        logger.setLevel(logging.WARNING)
 
-    logger.info(f"Starting Markdown chunking for '{source_filename}' (max_chars: {max_chars_per_chunk}, min_chars: {min_chars_per_chunk}, split_level: H{split_level}). Mode: Header splitting only.")
+    _print_feedback(f"Starte Markdown-Chunking für '{source_filename}' (max_Zeichen: {max_chars_per_chunk}, min_Zeichen: {min_chars_per_chunk}, Teilungsebene: H{split_level}). Modus: Nur Überschriftenteilung.")
 
     base_chunks = _initial_split(markdown_text, source_filename, split_level)
 
@@ -220,16 +204,15 @@ def split_markdown_by_headers(
 
         if current_content_len > max_chars_per_chunk:
             if not chunk["content"].strip() and not chunk["header_text"]:
-                logger.debug(f"    Skipping effectively empty oversized chunk that was '{chunk['header_text']}'.")
                 continue
 
             sub_chunks = _handle_oversized_chunk(chunk)
 
             if len(sub_chunks) == 1 and sub_chunks[0] is chunk:
-                logger.error(
-                    f"Chunk '{chunk['header_text']}' (length {current_content_len}) "
-                    f"exceeds max_chars_per_chunk ({max_chars_per_chunk}) and "
-                    f"could not be split further by available headers. This chunk will be OMITTED."
+                _print_feedback(
+                    f"Chunk '{chunk['header_text']}' (Länge {current_content_len}) "
+                    f"überschreitet max_chars_per_chunk ({max_chars_per_chunk}) und "
+                    f"konnte nicht weiter durch verfügbare Überschriften geteilt werden. Dieser Chunk wird ÜBERSPRUNGEN.", "ERROR"
                 )
             else:
                 processing_queue = sub_chunks + processing_queue
@@ -238,12 +221,10 @@ def split_markdown_by_headers(
             fully_processed_chunks.append(chunk)
 
     if iter_count >= MAX_ITERATIONS_OVERSIZED and processing_queue:
-        logger.warning(f"Max processing iterations ({MAX_ITERATIONS_OVERSIZED}) reached for oversized chunks. {len(processing_queue)} chunks remain in queue and will be OMITTED if still oversized.")
-
-    logger.info(f"After oversized processing, {len(fully_processed_chunks)} potential chunks before merging.")
+        _print_feedback(f"Maximale Verarbeitungsiterationen ({MAX_ITERATIONS_OVERSIZED}) für übergroße Chunks erreicht. {len(processing_queue)} Chunks verbleiben in der Warteschlange und werden ÜBERSPRUNGEN, falls immer noch übergroß.", "WARNING")
 
     if not fully_processed_chunks:
-        logger.info("No chunks to process for merging.")
+        _print_feedback("Keine Chunks zum Zusammenführen vorhanden.")
         return []
 
     merged_chunks: List[Dict[str, Any]] = []
@@ -252,7 +233,6 @@ def split_markdown_by_headers(
         current_chunk = fully_processed_chunks[i]
 
         if not current_chunk["content"].strip() and not current_chunk["header_text"].strip():
-            logger.debug(f"    Skipping merge consideration for empty chunk: '{current_chunk['header_text']}'.")
             i += 1
             continue
 
@@ -262,7 +242,6 @@ def split_markdown_by_headers(
             next_chunk = fully_processed_chunks[i+1]
 
             if not next_chunk["content"].strip() and not next_chunk["header_text"].strip():
-                logger.debug(f"    Next chunk for merging is empty ('{next_chunk['header_text']}'), keeping current ('{current_chunk['header_text']}') as is.")
                 merged_chunks.append(current_chunk)
                 i += 2
                 continue
@@ -270,8 +249,6 @@ def split_markdown_by_headers(
             combined_content_len = current_content_len + len(next_chunk["content"]) + (2 if current_chunk["content"].strip() and next_chunk["content"].strip() else 0)
 
             if combined_content_len <= max_chars_per_chunk:
-                logger.info(f"    Merging undersized '{current_chunk['header_text']}' (len {current_content_len}) with '{next_chunk['header_text']}' (len {len(next_chunk['content'])}).")
-
                 new_content_parts = []
                 if current_chunk["content"].strip(): new_content_parts.append(current_chunk["content"].strip())
                 if next_chunk["content"].strip(): new_content_parts.append(next_chunk["content"].strip())
@@ -306,10 +283,8 @@ def split_markdown_by_headers(
             merged_chunks.append(current_chunk)
             i += 1
 
-    logger.info(f"After merging undersized, {len(merged_chunks)} chunks.")
-
     final_valid_chunks = [
         chunk for chunk in merged_chunks if chunk["content"].strip() or chunk["header_text"].strip()
     ]
-    logger.info(f"Markdown chunking process complete. Returning {len(final_valid_chunks)} chunks. Mode: Header splitting only.")
+    _print_feedback(f"Markdown-Chunking-Prozess abgeschlossen. Gebe {len(final_valid_chunks)} Chunks zurück.")
     return final_valid_chunks

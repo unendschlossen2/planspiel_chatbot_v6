@@ -7,15 +7,15 @@ def attempt_huggingface_login(token: Optional[str] = None) -> bool:
         if token:
             try:
                 login(token=token, add_to_git_credential=False)
-                print("Hugging Face login successful using provided token.")
+                print("Hugging Face Login mit bereitgestelltem Token erfolgreich.")
                 return True
             except Exception as e:
-                print(f"Hugging Face login failed with provided token: {e}")
+                print(f"Hugging Face Login mit bereitgestelltem Token fehlgeschlagen: {e}")
                 return False
         else:
-            print("No Hugging Face token provided. Skipping token-based login.")
-            print("You can log in interactively if in a suitable environment or by setting the HUGGING_FACE_HUB_TOKEN environment variable.")
+            print("Kein Hugging Face Token bereitgestellt. Überspringe tokenbasierten Login.")
+            print("Sie können sich interaktiv anmelden, falls in einer passenden Umgebung, oder durch Setzen der HUGGING_FACE_HUB_TOKEN Umgebungsvariable.")
             return False
     else:
-        print("Already logged in to Hugging Face.")
+        print("Bereits bei Hugging Face angemeldet.")
         return True

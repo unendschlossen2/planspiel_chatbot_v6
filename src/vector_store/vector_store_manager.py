@@ -1,18 +1,8 @@
-import logging
 from typing import List, Dict, Any
 import chromadb
-import chromadb.errors # For specific errors like DuplicateCollectionError
+import chromadb.errors
 import numpy as np
 import re
-
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
 
 def _sanitize_id_part(part: str) -> str:
     part = str(part)
@@ -41,22 +31,22 @@ def _prepare_data_for_chroma(
             is_embedding_valid = True
 
         if not is_embedding_valid:
-            logger.debug(
-                f"Chunk (index {i}) from '{chunk.get('source_filename', 'sfn')}' "
-                f"titled '{chunk.get('header_text', 'N/A')[:30]}...' has no valid embedding. Skipping."
+            print(
+                f"Chunk (Index {i}) von '{chunk.get('source_filename', 'unbekannte_quelldatei')}' "
+                f"mit Titel '{chunk.get('header_text', 'N/A')[:30]}...' hat kein gültiges Embedding. Überspringe."
             )
             continue
 
         if not content_text.strip() and not chunk.get('header_text', '').strip():
-            logger.debug(
-                f"Chunk (index {i}) from '{chunk.get('source_filename', 'sfn')}' "
-                f"has no content and no header. Skipping."
+            print(
+                f"Chunk (Index {i}) von '{chunk.get('source_filename', 'unbekannte_quelldatei')}' "
+                f"hat keinen Inhalt und keine Überschrift. Überspringe."
             )
             continue
 
-        sfn_part = _sanitize_id_part(chunk.get('source_filename', f'sfn_unknown'))
-        obh_part = _sanitize_id_part(chunk.get('original_base_header', f'obh_unknown'))
-        ht_part = _sanitize_id_part(chunk.get('header_text', f'ht_unknown'))
+        sfn_part = _sanitize_id_part(chunk.get('source_filename', f'sfn_unbekannt'))
+        obh_part = _sanitize_id_part(chunk.get('original_base_header', f'obh_unbekannt'))
+        ht_part = _sanitize_id_part(chunk.get('header_text', f'ht_unbekannt'))
 
         base_id = f"{sfn_part}_{obh_part}_{ht_part}_{valid_chunks_processed_count}"
         unique_id = base_id
@@ -83,7 +73,7 @@ def _prepare_data_for_chroma(
         valid_chunks_processed_count +=1
 
     if valid_chunks_processed_count == 0 and len(chunks_with_embeddings) > 0:
-        logger.warning("No valid chunks with embeddings found to prepare for ChromaDB.")
+        print("Keine gültigen Chunks mit Embeddings zur Vorbereitung für ChromaDB gefunden.")
         return [], [], [], []
 
     return ids_list, embeddings_list, metadatas_list, documents_list
@@ -95,66 +85,65 @@ def create_and_populate_vector_store(
         force_rebuild_collection: bool = True
 ) -> chromadb.Collection | None:
 
-    logger.info(f"Initializing ChromaDB PersistentClient at path: {db_path}")
+    print(f"Initialisiere ChromaDB PersistentClient unter Pfad: {db_path}")
     try:
         client = chromadb.PersistentClient(path=db_path)
         existing_collections_objects = client.list_collections()
         existing_collection_names = [col.name for col in existing_collections_objects]
-        logger.info(f"Available collections in DB at '{db_path}': {existing_collection_names}")
+        print(f"Verfügbare Kollektionen in DB unter '{db_path}': {existing_collection_names}")
     except Exception as e:
-        logger.error(f"Failed to initialize ChromaDB client or list collections at {db_path}: {e}", exc_info=True)
+        print(f"Fehler bei der Initialisierung des ChromaDB-Clients oder beim Auflisten der Kollektionen unter {db_path}: {e}")
         return None
 
-    collection: chromadb.Collection | None = None
-
     if force_rebuild_collection:
-        logger.info(f"Force_rebuild_collection is True for collection '{collection_name}'. Ensuring a fresh build.")
+        print(f"Force_rebuild_collection ist True für Kollektion '{collection_name}'. Stelle einen frischen Build sicher.")
         if collection_name in existing_collection_names:
             try:
-                logger.info(f"Collection '{collection_name}' exists. Deleting it for rebuild.")
+                print(f"Kollektion '{collection_name}' existiert. Lösche sie für den Rebuild.")
                 client.delete_collection(name=collection_name)
-                logger.info(f"Collection '{collection_name}' deleted successfully.")
+                print(f"Kollektion '{collection_name}' erfolgreich gelöscht.")
             except Exception as e_del:
-                logger.error(f"Failed to delete existing collection '{collection_name}': {e_del}. Aborting rebuild to prevent data inconsistency.", exc_info=True)
-                return None # If delete fails, we can't guarantee a fresh collection
+                print(f"Fehler beim Löschen der existierenden Kollektion '{collection_name}': {e_del}. Breche Rebuild ab, um Dateninkonsistenz zu vermeiden.")
+                return None
         else:
-            logger.info(f"Collection '{collection_name}' does not exist. No deletion needed.")
+            print(f"Kollektion '{collection_name}' existiert nicht. Kein Löschen erforderlich.")
 
         try:
             collection = client.create_collection(name=collection_name, metadata={"hnsw:space": "cosine"})
-            logger.info(f"Successfully created new empty collection '{collection_name}'.")
+            print(f"Neue leere Kollektion '{collection_name}' erfolgreich erstellt.")
 
         except Exception as e_create:
-            logger.error(f"Generic error during creation of collection '{collection_name}' for rebuild: {e_create}", exc_info=True)
+            print(f"Allgemeiner Fehler während der Erstellung der Kollektion '{collection_name}' für den Rebuild: {e_create}")
             return None
 
         if not chunks_with_embeddings and collection is not None:
-            logger.warning("Rebuild is True, but no chunks provided to populate. Collection will be empty.")
+            print("Rebuild ist True, aber keine Chunks zum Füllen bereitgestellt. Kollektion wird leer sein.")
             return collection
 
         ids, embeddings, metadatas, documents = _prepare_data_for_chroma(chunks_with_embeddings)
         if not ids:
-            logger.warning(f"No valid data prepared from chunks. Collection '{collection_name}' will not be populated in this run.")
+            print(f"Keine gültigen Daten aus Chunks vorbereitet. Kollektion '{collection_name}' wird in diesem Durchlauf nicht gefüllt.")
             return collection
 
         try:
-            logger.info(f"Adding {len(ids)} items to newly created ChromaDB collection '{collection_name}'...")
+            print(f"Füge {len(ids)} Elemente zur neu erstellten ChromaDB-Kollektion '{collection_name}' hinzu...")
             collection.add(ids=ids, embeddings=embeddings, metadatas=metadatas, documents=documents)
-            logger.info(f"Successfully added {collection.count()} items to collection '{collection_name}'.")
+            print(f"Erfolgreich {collection.count()} Elemente zur Kollektion '{collection_name}' hinzugefügt.")
         except Exception as e_add:
-            logger.error(f"Failed to add data to collection '{collection_name}' during rebuild: {e_add}", exc_info=True)
+            print(f"Fehler beim Hinzufügen von Daten zur Kollektion '{collection_name}' während des Rebuilds: {e_add}")
             return collection
 
     else:
-        logger.info(f"Force_rebuild_collection is False. Attempting to load existing collection '{collection_name}'.")
+        print(f"Force_rebuild_collection ist False. Versuche, existierende Kollektion '{collection_name}' zu laden.")
         if collection_name in existing_collection_names:
             try:
                 collection = client.get_collection(name=collection_name)
-                logger.info(f"Successfully loaded existing collection '{collection_name}' with {collection.count()} items. Data will not be re-added.")
+                print(f"Existierende Kollektion '{collection_name}' mit {collection.count()} Elementen erfolgreich geladen. Daten werden nicht erneut hinzugefügt.")
+                return collection
             except Exception as e_get:
-                logger.error(f"An error occurred while trying to get existing collection '{collection_name}': {e_get}", exc_info=True)
+                print(f"Ein Fehler trat auf beim Versuch, die existierende Kollektion '{collection_name}' zu laden: {e_get}")
                 return None
         else:
-            logger.error(f"Collection '{collection_name}' does not exist. "
-                         f"Please run with force_rebuild_collection=True to create and populate it first.")
+            print(f"Kollektion '{collection_name}' existiert nicht. "
+                  f"Bitte mit force_rebuild_collection=True ausführen, um sie zuerst zu erstellen und zu füllen.")
             return None
