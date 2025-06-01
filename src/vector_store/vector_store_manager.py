@@ -129,6 +129,7 @@ def create_and_populate_vector_store(
             print(f"Füge {len(ids)} Elemente zur neu erstellten ChromaDB-Kollektion '{collection_name}' hinzu...")
             collection.add(ids=ids, embeddings=embeddings, metadatas=metadatas, documents=documents)
             print(f"Erfolgreich {collection.count()} Elemente zur Kollektion '{collection_name}' hinzugefügt.")
+            return collection
         except Exception as e_add:
             print(f"Fehler beim Hinzufügen von Daten zur Kollektion '{collection_name}' während des Rebuilds: {e_add}")
             return collection

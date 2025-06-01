@@ -10,7 +10,7 @@ from generation.llm_answer_generator import *
 
 def main():
     initial_split_level = 3
-    max_chars_per_chunk = 2000
+    max_chars_per_chunk = 2100
     min_chars_per_chunk = 75
 
     embedding_model_id = "infly/inf-retriever-v1-1.5b"
@@ -28,7 +28,7 @@ def main():
     db_persist_path = "./db/chroma_vector_db"
     db_collection_name = "topsim_gm_coll_gemma3_test"
 
-    force_rebuild_collection = False
+    force_rebuild_collection = True
 
     # huggingface_token = "TOKEN"
     # if huggingface_token == "TOKEN": huggingface_token = None

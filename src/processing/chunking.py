@@ -194,7 +194,7 @@ def split_markdown_by_headers(
     processing_queue = list(base_chunks)
     fully_processed_chunks = []
 
-    MAX_ITERATIONS_OVERSIZED = len(base_chunks) + 20
+    MAX_ITERATIONS_OVERSIZED = len(base_chunks) + 100
     iter_count = 0
 
     while processing_queue and iter_count < MAX_ITERATIONS_OVERSIZED :
