@@ -6,7 +6,7 @@ from embeddings.embedding_generator import load_embedding_model, embed_chunks
 from vector_store.vector_store_manager import create_and_populate_vector_store
 from retrieval.retriever import embed_query, query_vector_store
 from generation.llm_answer_generator import *
-
+from retrieval.reranker import load_reranker_model, gap_based_rerank_and_filter
 
 def main():
     initial_split_level = 3
@@ -15,11 +15,20 @@ def main():
 
     embedding_model_id = "infly/inf-retriever-v1-1.5b"
 
-    ollama_llm_model = "gemma3:4b"
-    # ollama_llm_model = "mistral:7b-instruct"
-    # ollama_llm_model = "gemma3:12b-it-q4_K_M"
-    # ollama_llm_model = "mixtral:8x7b-instruct"
+    USE_RERANKER = True
+    RERANKER_MODEL_ID = "BAAI/bge-reranker-large" # BAAI/bge-reranker-large # mixedbread-ai/mxbai-rerank-large-v2
+    RERANKER_INITIAL_TOP_K = 15
 
+    MIN_ABSOLUTE_RERANK_SCORE_THRESHOLD_RERANKED = 0.001 # NEUER PARAMETER: Schwellenwert für "potenziell relevant"
+    MIN_CHUNKS_TO_LLM_RERANKED = 1
+    MAX_CHUNKS_TO_LLM_RERANKED = 5
+    MIN_CHUNKS_FOR_GAP_DETECTION_RERANKED = 4
+    GAP_DETECTION_FACTOR_RERANKED = 0.25
+    SMALL_EPSILON_RERANKED = 1e-5
+
+    DEFAULT_RETRIEVAL_TOP_K = 3
+
+    ollama_llm_model = "gemma3:4b"
     ollama_generation_options = {
         "temperature": 0.3,
         "num_predict": 512
@@ -27,12 +36,7 @@ def main():
 
     db_persist_path = "./db/chroma_vector_db"
     db_collection_name = "topsim_gm_coll_gemma3_test"
-
-    force_rebuild_collection = True
-
-    # huggingface_token = "TOKEN"
-    # if huggingface_token == "TOKEN": huggingface_token = None
-    # if huggingface_token: attempt_huggingface_login(huggingface_token)
+    force_rebuild_collection = False
 
     try:
         processing_device_obj = load_gpu()
@@ -40,7 +44,7 @@ def main():
     except RuntimeError as e:
         print(f"GPU Ladefehler: {e}. Wechsle zu CPU.")
         processing_device_str = "cpu"
-    print(f"Verwende Gerät: {processing_device_str} für Embedding-Modell-Operationen.")
+    print(f"Verwende Gerät: {processing_device_str} für Modell-Operationen.")
 
     try:
         print(f"Lade Embedding-Modell '{embedding_model_id}' für die Sitzung...")
@@ -50,6 +54,21 @@ def main():
         print(f"KRITISCH: Konnte Embedding-Modell '{embedding_model_id}' nicht laden. Fortfahren nicht möglich. Fehler: {e}")
         return
 
+    loaded_reranker_model = None
+    if USE_RERANKER:
+        try:
+            print(f"Lade Reranker-Modell '{RERANKER_MODEL_ID}' für die Sitzung...")
+            loaded_reranker_model = load_reranker_model(RERANKER_MODEL_ID, device=processing_device_str)
+            if loaded_reranker_model is None:
+                print(f"WARNUNG: Reranker-Modell konnte nicht geladen werden, Reranking wird deaktiviert.")
+                USE_RERANKER = False
+            else:
+                print("Reranker-Modell erfolgreich für die Sitzung geladen.")
+        except Exception as e:
+            print(f"WARNUNG: Konnte Reranker-Modell '{RERANKER_MODEL_ID}' nicht laden. Reranking wird deaktiviert. Fehler: {e}")
+            USE_RERANKER = False
+
+    # ... (Rest des Datenverarbeitungs- und DB-Aufbau-Codes bleibt gleich) ...
     all_files_chunks_with_embeddings = []
     if force_rebuild_collection:
         print("Modus: Vollständige Datenverarbeitung und Neuaufbau der Vektor-Speicher-Kollektion AKTIVIERT.")
@@ -112,6 +131,10 @@ def main():
 
     if db_collection and loaded_embedding_model:
         print(f"\n--- TOPSIM RAG Chatbot Bereit (Modell: {ollama_llm_model}) ---")
+        if USE_RERANKER and loaded_reranker_model:
+            print(f"--- Reranking AKTIVIERT mit Modell: {RERANKER_MODEL_ID} ---")
+        else:
+            print(f"--- Reranking DEAKTIVIERT ---")
         print("Geben Sie Ihre Anfrage ein oder 'quit' zum Beenden.")
 
         while True:
@@ -126,26 +149,52 @@ def main():
                 print("Chatbot wird beendet.")
                 break
 
-            top_k_for_retrieval = 3
-
             print(f"Verarbeite Anfrage: '{user_query_text}'...")
             try:
                 query_embedding_vector = embed_query(loaded_embedding_model, user_query_text)
-                retrieved_docs = query_vector_store(db_collection, query_embedding_vector, top_k_for_retrieval)
 
-                if not retrieved_docs:
-                    print("Konnte keine relevanten Dokumente im Handbuch für Ihre Anfrage finden.")
+                current_retrieval_top_k = RERANKER_INITIAL_TOP_K if USE_RERANKER and loaded_reranker_model else DEFAULT_RETRIEVAL_TOP_K
 
-                print(f"Generiere Antwort mit {ollama_llm_model} basierend auf {len(retrieved_docs)} abgerufenen Chunk(s)...")
+                print(f"Rufe Top-{current_retrieval_top_k} Dokumente aus dem Vektor-Speicher ab.")
+                retrieved_docs_initial = query_vector_store(db_collection, query_embedding_vector, current_retrieval_top_k)
 
-                final_answer = generate_llm_answer(
+                final_docs_for_llm = []
+                if USE_RERANKER and loaded_reranker_model:
+                    if retrieved_docs_initial:
+                        reranked_and_filtered_docs = gap_based_rerank_and_filter(
+                            user_query=user_query_text,
+                            initial_retrieved_docs=retrieved_docs_initial,
+                            reranker_model=loaded_reranker_model,
+                            min_absolute_rerank_score_threshold=MIN_ABSOLUTE_RERANK_SCORE_THRESHOLD_RERANKED, # HIER ÜBERGEBEN
+                            min_chunks_to_llm=MIN_CHUNKS_TO_LLM_RERANKED,
+                            max_chunks_to_llm=MAX_CHUNKS_TO_LLM_RERANKED,
+                            min_chunks_for_gap_detection=MIN_CHUNKS_FOR_GAP_DETECTION_RERANKED,
+                            gap_detection_factor=GAP_DETECTION_FACTOR_RERANKED,
+                            small_epsilon=SMALL_EPSILON_RERANKED
+                        )
+                        final_docs_for_llm = reranked_and_filtered_docs
+                    else:
+                        print("Keine Dokumente vom initialen Retrieval für Reranking erhalten.")
+                        final_docs_for_llm = []
+                else:
+                    final_docs_for_llm = retrieved_docs_initial
+
+                if not final_docs_for_llm:
+                    print("Konnte keine relevanten Dokumente im Handbuch für Ihre Anfrage finden (nach ggf. Reranking).")
+                    # Optional hier eine Antwort geben, z.B.:
+                    # print("\nAssistent: Ich konnte leider keine passenden Informationen zu Ihrer Anfrage finden.")
+                    # continue
+
+                print(f"Generiere Antwort mit {ollama_llm_model} basierend auf {len(final_docs_for_llm)} abgerufenen/gefilterten Chunk(s)...")
+
+                llm_answer = generate_llm_answer(
                     user_query_text,
-                    retrieved_docs,
+                    final_docs_for_llm,
                     ollama_model_name=ollama_llm_model,
                     ollama_options=ollama_generation_options
                 )
 
-                print(f"\nAssistent: {final_answer}")
+                print(f"\nAssistent: {llm_answer}")
 
             except Exception as e:
                 print(f"Fehler während der Anfrageverarbeitung oder LLM-Generierung: {e}")

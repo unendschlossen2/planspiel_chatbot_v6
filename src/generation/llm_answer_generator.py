@@ -38,8 +38,8 @@ def generate_llm_answer(
     else:
         current_prompt_template = """Sie sind ein Experte für das Planspiel TOPSIM und geben Antworten, die *ausschließlich* auf den bereitgestellten Kontext-Schnipseln aus dem TOPSIM Handbuch basieren.
 Wenn der Kontext die Informationen zur Beantwortung der Frage nicht enthält, müssen Sie klar angeben, dass die Informationen in den bereitgestellten Schnipseln nicht gefunden wurden.
-Erfinden Sie keine Informationen und verwenden Sie kein externes Wissen, außer Allgemeingültigkeiten.
-Wenn möglich, können Sie dezent auf den Abschnitt verweisen, aus dem die Informationen stammen, falls dies die Klarheit erhöht.
+Erfinden Sie keine Informationen und verwenden Sie kein externes Wissen, außer Allgemeinwissen und unabhängige Fakten.
+Wenn möglich, können Sie auf den Abschnitt (nicht SCHNIPSEL!) verweisen, aus dem die Informationen stammen, falls dies die Klarheit erhöht.
 ANTWORTEN SIE IMMER AUF DEUTSCH, auch wenn die Frage auf Englisch ist.
 
 Bereitgestellter Kontext aus dem TOPSIM Handbuch:
